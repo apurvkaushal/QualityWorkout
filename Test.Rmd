@@ -1,0 +1,136 @@
+---
+title: "Quality_Workout"
+author: "Apurv Kaushal"
+date: "26 August 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(dplyr)
+library(rpart)
+library(e1071)
+```
+
+## Executive Summary
+The report outlines the process of generating a robust prediction model for the Weight Lifting Exercise Datbase to predict the quality of the workout exercise based on an on body sensing approach. The random forest model applied PCA processed dataset gives the maximum validation set accuracy of about 96 % among the used classification techniques like Naive Bayes,Decision Tress & Support Vector Machine. The out of sample error rate is approxmately 4 % for the validation set separated from the original data.
+
+## Experiment Background
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+## Data Set Exploration
+```{r }
+library(caret)
+set.seed(25)
+dtset<-read.csv("C:\\Users\\Apurv kaushal\\Documents\\pml-training.csv")
+str(dtset)
+```
+Removing features with very high number of NA Values
+```{r dtset}
+ntbl<-colSums(is.na(dtset))/nrow(dtset)
+tempdf<-data.frame(colName=names(dtset),PropNA=matrix(unlist(ntbl)))
+tempdf[,1]<-as.character(tempdf[,1])
+indx<-which(tempdf$PropNA==0.0000000)
+library(dplyr)
+dtset1<-select(dtset,tempdf[indx,1])
+```
+Removing features with very high number of "" Values
+```{r dtset1}
+truthvec<-c()
+k<-1
+for (i in names(dtset1)){
+  if (dtset1[1,i]==""){
+    truthvec[k]<-"TRUE"
+    k<-k+1
+  }
+  else{
+    truthvec[k]<-"FALSE"
+    k<-k+1
+  }
+}
+dtset2<-dtset1[,truthvec=="FALSE"]
+```
+Removing correlated features
+```{r}
+dtset2$tot_acc_belt<-sqrt(dtset$accel_belt_x^2+dtset$accel_belt_y^2+dtset$accel_belt_z^2)
+plot(dtset2$total_accel_belt,dtset2$tot_acc_belt)
+```
+The plot shows linear correlation for the belt location. Similar graphs can be obtained for dumbbell, forearm & arm locations. It is the physics correlation: Total acceleration=(Acceleration_x^2+Acceleration_y^2+Acceleration_z^2)^0.5
+```{r}
+dtset2<-dtset2[,!grepl("^tot",names(dtset2))]
+```
+Removing features that should be logically uncorrelated to the prediction variable. The features being removed are
+X: it represents the serial no. of observations hence uncorrelated
+user_name: the user's identity should not play a role in prediction as the metric for the correct workout is defined independently, for all human beings. 
+raw_timestamp_1: it is the expression for a part of time of observation hence uncorrelated
+raw_timestamp_2: same reason as raw_timestamp_1
+cvtd_timestamp: same reason as for raw_timestamp_1 
+new_window: it is a variable of the experimental conditions, indicating probably some sense of continuous time frame for observations between breaks.
+num_window: this feature keeps track of the number of breaks hence uncorrelated.
+
+```{r}
+dtset2<-dtset2[,8:ncol(dtset2)]
+```
+Further exploration of correlation between features
+```{r}
+qplot(dtset2$gyros_belt_x,dtset2$magnet_belt_x)
+tempdf<-dtset2[,1:12]
+cor(tempdf)[which((cor(tempdf)>0.6 & cor(tempdf)<1 )| (cor(tempdf)< -0.6 & cor(tempdf)>-1))]
+```
+There are about 27 correlations with absolute value > 0.6 but less than <1.0 in just the small extracted dataset. Thus, Principal Component Analysis will be useful. First, we need to break the data into training & validation data sets.
+```{r dtset2}
+indx<-createDataPartition(y=dtset2$classe,p=3/4)[[1]]
+trainset<-dtset2[indx,]
+validset<-dtset2[-indx,]
+pcmp<-prcomp(trainset[,1:48])
+summary(pcmp)$importance
+```
+The first 9 principal components explain 95 per cent of the variance in the data set. We will thus, use the first 9 components.
+
+```{r trainset}
+prepc<-preProcess(trainset[,1:48],method="pca",pcaComp=9)
+proctrain<-predict(prepc,trainset[,1:48])
+proctrain$classe<-trainset$classe
+```
+Next, we will now fit classification models to the pre processed training data set. 
+Naive Bayes
+```{r proctrain}
+mdl<-naiveBayes(classe~.,data=proctrain)
+cf<-confusionMatrix(trainset$classe,predict(mdl,proctrain))$overall
+```
+Very low accuracy of 43 per cent on the training set itself. Hence the model is rejected.
+Decision Tree
+```{r}
+library(rpart)
+mdl<-rpart(classe~.,data=proctrain,method="class")
+cf<-confusionMatrix(trainset$classe,predict(mdl,proctrain,type="class"))$overall
+```
+Very low accuracy of 49 per cent on training set. Hence the model is rejected.
+SVM
+```{r}
+library(e1071)
+mdl<-svm(classe~.,data=proctrain)
+cf<-confusionMatrix(trainset$classe,predict(mdl,proctrain))$overall
+proctest<-predict(prepc,validset[,1:48])
+confusionMatrix(validset$classe,predict(mdl,proctest))$overall
+```
+Accuracy of 80 per cent on the training set. Accuracy of 80 per cent on the validation set too. Hence. the SVM model till now is the best model.
+
+Random Forest
+```{r}
+mdl_rf<-train(classe~.,data=proctrain,method="rf")
+confusionMatrix(validset$classe,predict(mdl_rf,proctest))$overall
+plot(validset$classe,predict(mdl_rf,proctest))
+```
+With an Accuracy of about 96 per cent on the validation set, the random forest model is the best predictor. The out of sample error rate is 4 % on the validation set.
+
+
+## Conclusion
+1. From the original present 159 predictor variables, only 49 predictor variables were used as final features. Rest of the features were not selected due to sparse nature of data, correlation with other data elements & no logical connect with the predictor variable in the context of the problem. 
+2. A 75- 25 split of the dataset was done to obtain training & carry out cross validation on the 25 per cent data.
+3. Random forest method provides the optimum accuracy of around 96 per cent for the validation set followed by a support vector machine with an accuracy of 80 per cent.
+4. The out of the sample error rate estimate is around 4 % as per the accuracy levels for the Random Forest Model
